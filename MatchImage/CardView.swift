@@ -8,11 +8,24 @@
 import SwiftUI
 
 struct CardView: View {
+    let card: Card
     var body: some View {
-        Text(/*@START_MENU_TOKEN@*/"Hello, World!"/*@END_MENU_TOKEN@*/)
+        ZStack {
+                   if card.isRevealed || card.isMatched {
+                       Image(card.imageName)
+                           .resizable()
+                           .aspectRatio(contentMode: .fit)
+                   } else {
+                       Rectangle()
+                           .fill(Color.blue)
+                   }
+               }
+               .frame(width: 70, height: 70)
+               .clipShape(RoundedRectangle(cornerRadius: 8))
+               .shadow(radius: 2)
     }
 }
 
 #Preview {
-    CardView()
+    CardView(card: Card(id: UUID(), imageName: "flower", isRevealed: false, isMatched: false))
 }

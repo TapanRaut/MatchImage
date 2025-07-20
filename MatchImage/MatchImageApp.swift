@@ -11,7 +11,7 @@ import SwiftUI
 struct MatchImageApp: App {
     var body: some Scene {
         WindowGroup {
-            ContentView()
+            MemoryGameView()
         }
     }
 }
