@@ -6,6 +6,8 @@
 //
 
 import SwiftUI
+import AVFoundation
+import UIKit
 
 struct Card: Identifiable {
     let id: UUID
@@ -33,14 +35,6 @@ enum Difficulty: String, CaseIterable, Identifiable {
         case .hard: return 30
         }
     }
-
-    var backgroundColor: Color {
-        switch self {
-        case .easy: return .green.opacity(0.2)
-        case .medium: return .orange.opacity(0.2)
-        case .hard: return .red.opacity(0.2)
-        }
-    }
 }
 
 struct ScoreEntry: Codable, Identifiable {
@@ -49,6 +43,21 @@ struct ScoreEntry: Codable, Identifiable {
     let moves: Int
     let date: Date
 }
+
+struct SeededGenerator: RandomNumberGenerator {
+    var seed: UInt64
+
+    init(seed: Int) {
+        self.seed = UInt64(bitPattern: Int64(seed))
+    }
+
+    mutating func next() -> UInt64 {
+        seed = seed &* 6364136223846793005 &+ 1
+        return seed
+    }
+}
+
+
 
 struct MemoryGameView: View {
     @State private var cards: [Card] = []
@@ -62,6 +71,15 @@ struct MemoryGameView: View {
     @State private var highScore: Int = 0
     @State private var showWin = false
     @State private var showLeaderboard = false
+    @State private var isDailyChallenge = false
+    @State private var completedToday = false
+    @State private var currentBackground = LinearGradient(
+        gradient: Gradient(colors: [.blue, .purple]),
+        startPoint: .topLeading,
+        endPoint: .bottomTrailing
+    )
+    @State private var backgroundTimer: Timer?
+
     @Namespace private var animation
 
     let columns = [GridItem(.adaptive(minimum: 70))]
@@ -71,8 +89,16 @@ struct MemoryGameView: View {
     }
 
     var body: some View {
+            
         NavigationView {
             VStack {
+                Toggle("\u{1F4C6} Daily Challenge", isOn: $isDailyChallenge)
+                    .toggleStyle(SwitchToggleStyle(tint: .blue))
+                    .padding()
+                    .onChange(of: isDailyChallenge) { _ in
+                        restartGame()
+                    }
+                
                 Picker("Difficulty", selection: $selectedDifficulty) {
                     ForEach(Difficulty.allCases) { level in
                         Text(level.rawValue.capitalized).tag(level)
@@ -83,22 +109,26 @@ struct MemoryGameView: View {
                 .onChange(of: selectedDifficulty) { _ in
                     restartGame()
                 }
-
+                
                 Text("Current Level: \(selectedDifficulty.rawValue.capitalized)")
                     .font(.headline)
-
-                Text("High Score: \(highScore)")
+                
+                Text(completedToday ? "\u{2705} Today's Challenge Completed" : "High Score: \(highScore)")
                     .font(.subheadline)
                     .foregroundColor(.blue)
-
+                
                 Text("Score: \(score) | Moves: \(moves) | ⏱️ \(timeLeft)s")
                     .font(.footnote)
                     .padding(.bottom, 4)
-
+                
                 Text("Average Score: \(averageScore())")
                     .font(.caption)
                     .foregroundColor(.gray)
-
+                
+                ProgressView(value: Double(timeLeft), total: Double(selectedDifficulty.timeLimit))
+                    .progressViewStyle(LinearProgressViewStyle(tint: .blue))
+                    .padding(.horizontal)
+                
                 LazyVGrid(columns: columns) {
                     ForEach(cards.indices, id: \.self) { index in
                         CardView(card: cards[index])
@@ -109,12 +139,12 @@ struct MemoryGameView: View {
                             .animation(.easeInOut(duration: 0.3), value: cards[index].isMatched)
                     }
                 }
-
+                
                 HStack {
                     Button("Restart Game") {
                         restartGame()
                     }
-
+                    
                     Button("Reset High Score") {
                         highScore = 0
                         UserDefaults.standard.removeObject(forKey: highScoreKey)
@@ -122,8 +152,8 @@ struct MemoryGameView: View {
                     .foregroundColor(.red)
                 }
                 .padding()
-
-                Button("🏆 View Leaderboard") {
+                
+                Button("\u{1F3C6} View Leaderboard") {
                     showLeaderboard = true
                 }
                 .padding()
@@ -133,13 +163,20 @@ struct MemoryGameView: View {
             }
             .padding()
             .background(
-                selectedDifficulty.backgroundColor
-                    .animation(.easeInOut, value: selectedDifficulty)
-                    .edgesIgnoringSafeArea(.all)
+                currentBackground
+                    .ignoresSafeArea()
             )
             .navigationTitle("Memory Game")
-            .onAppear(perform: restartGame)
-            .alert("🎉 You Won!", isPresented: $showWin) {
+            .onAppear {
+                restartGame()
+                SoundManager.shared.playBackgroundMusic()
+                startBackgroundTimer()
+            }
+            .onDisappear {
+                SoundManager.shared.stopBackgroundMusic()
+                backgroundTimer?.invalidate()
+            }
+            .alert("\u{1F389} You Won!", isPresented: $showWin) {
                 Button("OK") {
                     restartGame()
                 }
@@ -148,10 +185,48 @@ struct MemoryGameView: View {
             }
         }
     }
+    
+
+    func startBackgroundTimer() {
+        backgroundTimer?.invalidate()
+        backgroundTimer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { _ in
+            withAnimation(.easeInOut(duration: 2.0)) {
+                currentBackground = generateRandomGradient()
+            }
+        }
+    }
+
+    func generateRandomGradient() -> LinearGradient {
+        let colors: [Color] = [.blue, .purple, .pink, .orange, .green, .teal, .red, .yellow, .indigo]
+        let shuffled = colors.shuffled()
+        return LinearGradient(
+            gradient: Gradient(colors: [shuffled[0], shuffled[1]]),
+            startPoint: .topLeading,
+            endPoint: .bottomTrailing
+        )
+    }
+
+    func dailySeed() -> Int {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyyMMdd"
+        let dateString = formatter.string(from: Date())
+        return dateString.hashValue
+    }
 
     func restartGame() {
+        let todayKey = "DailyCompleted_\(Date().formatted(date: .numeric, time: .omitted))"
+        completedToday = UserDefaults.standard.bool(forKey: todayKey)
+
         let images = ["flower", "star", "moon", "heart", "sun.max", "cloud", "bolt", "leaf", "flame", "drop"]
-        let selectedImages = Array(images.shuffled().prefix(selectedDifficulty.pairCount))
+        var selectedImages: [String]
+
+        if isDailyChallenge {
+            var generator = SeededGenerator(seed: dailySeed())
+            selectedImages = Array(images.shuffled(using: &generator).prefix(selectedDifficulty.pairCount))
+        } else {
+            selectedImages = Array(images.shuffled().prefix(selectedDifficulty.pairCount))
+        }
+
         var pairs = (selectedImages + selectedImages).shuffled()
         cards = pairs.map { Card(id: UUID(), imageName: $0) }
         firstSelectedIndex = nil
@@ -161,7 +236,7 @@ struct MemoryGameView: View {
         moves = 0
         highScore = UserDefaults.standard.integer(forKey: highScoreKey)
         timer?.invalidate()
-        timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { _ in
+        timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [self] _ in
             if timeLeft > 0 {
                 timeLeft -= 1
             } else {
@@ -209,6 +284,11 @@ struct MemoryGameView: View {
                 highScore = score
                 UserDefaults.standard.set(score, forKey: highScoreKey)
             }
+            if isDailyChallenge {
+                let todayKey = "DailyCompleted_\(Date().formatted(date: .numeric, time: .omitted))"
+                UserDefaults.standard.set(true, forKey: todayKey)
+                completedToday = true
+            }
             saveScoreEntry(score: score, moves: moves)
             showWin = true
         }
@@ -218,7 +298,7 @@ struct MemoryGameView: View {
         var entries = loadLeaderboard()
         entries.append(ScoreEntry(score: score, moves: moves, date: Date()))
         entries.sort { $0.score > $1.score }
-        entries = Array(entries.prefix(10)) // Top 10
+        entries = Array(entries.prefix(10))
         if let data = try? JSONEncoder().encode(entries) {
             let key = leaderboardKey(for: selectedDifficulty)
             UserDefaults.standard.set(data, forKey: key)
@@ -246,7 +326,7 @@ struct MemoryGameView: View {
     }
 }
 
-
 #Preview {
     MemoryGameView()
 }
+
